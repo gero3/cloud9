@@ -51,7 +51,6 @@ module.exports = ext.register("ext/console/console", {
 
     autoOpen : true,
     excludeParent : true,
-    keyEvents: {},
 
     pageIdToPidMap : {},
 
@@ -124,6 +123,10 @@ module.exports = ext.register("ext/console/console", {
     },
 
     getLogStreamOutObject: function(tracer_id, idIsPid, originalInput) {
+        if (typeof tracer_id === "undefined") {
+            return null;
+        }
+        
         if (idIsPid)
             tracer_id = this.pidToTracerMap[tracer_id];
         var id = "section" + tracer_id;
@@ -207,21 +210,6 @@ module.exports = ext.register("ext/console/console", {
         lines.forEach(function(line) {
             logger.logNodeStream(line, null, lsOutObject, ide);
         });
-    },
-
-    commandTextHandler: function(e) {
-        if (this.keyEvents[e.keyCode])
-            this.keyEvents[e.keyCode](e.currentTarget);
-    },
-
-    keyupHandler: function(e) {
-        if (actionCodes.indexOf(e.keyCode) !== -1)
-            return this.commandTextHandler(e);
-    },
-
-    keydownHandler: function(e) {
-        if (actionCodes.indexOf(e.keyCode) === -1)
-            return this.commandTextHandler(e);
     },
 
     createOutputBlock: function(line, useOutput, tracerIdFromServer) {
@@ -394,25 +382,16 @@ module.exports = ext.register("ext/console/console", {
         }
     },
 
-    createNodeProcessLog : function(message_pid) {
-                var command_id = this.createOutputBlock("Running Node Process", true);
+    createNodeProcessLog: function(message_pid) {
+        var command_id = this.createOutputBlock("Running Node Process", true);
         this.tracerToPidMap[command_id] = message_pid;
         this.pidToTracerMap[message_pid] = command_id;
-
-                var containerEl = this.getLogStreamOutObject(command_id).$ext;
-                containerEl.setAttribute("rel", command_id);
-                apf.setStyleClass(containerEl, "has_pid");
-
-                if (window.cloud9config.hosted) {
-                    var url = location.protocol + "//" +
-                        ide.workspaceId.replace(/(\/)*user(\/)*/, '').split("/").reverse().join(".") +
-                        "." + location.host;
-                    logger.logNodeStream("Tip: you can access long running processes, like a server, at '" + url +
-                        "'.\nImportant: in your scripts, use 'process.env.PORT' as port and '0.0.0.0' as host.\n ",
-                null, this.getLogStreamOutObject(message_pid, true), ide);
-                }
-
-                this.command_id_tracer++;
+    
+        var containerEl = this.getLogStreamOutObject(command_id).$ext;
+        containerEl.setAttribute("rel", command_id);
+        apf.setStyleClass(containerEl, "has_pid");
+    
+        this.command_id_tracer++;
         return command_id;
     },
 
@@ -440,6 +419,47 @@ module.exports = ext.register("ext/console/console", {
                 this.createNodeProcessLog(message.pid);
                 return;
             case "node-data":
+                if (message.data && message.data.indexOf("Tip: you can") === 0) {
+                    (function () {
+                        var prjmatch = message.data.match(/http\:\/\/([\w_-]+)\.([\w_-]+)\./);
+                        if (!prjmatch) return;
+                        
+                        var user = prjmatch[2];
+                        var project = prjmatch[1];
+                        
+                        var urlPath = window.location.pathname.split("/").filter(function (f) { return !!f; });
+                        
+                        if (project !== ide.projectName) {
+                            // concurrency bug, project does not match
+                            apf.ajax("/api/debug", {
+                                method: "POST",
+                                contentType: "application/json",
+                                data: JSON.stringify({
+                                    agent: navigator.userAgent,
+                                    type: "Concurrency bug, project does not match",
+                                    e: [user, project, urlPath],
+                                    workspaceId: ide.workspaceId
+                                })
+                            });
+                        }
+                        else if (urlPath.length && user !== urlPath[0]) {
+                            // concurrency bug, user does not match
+                            apf.ajax("/api/debug", {
+                                method: "POST",
+                                contentType: "application/json",
+                                data: JSON.stringify({
+                                    agent: navigator.userAgent,
+                                    type: "Concurrency bug, user does not match",
+                                    e: [user, project, urlPath],
+                                    workspaceId: ide.workspaceId
+                                })
+                            });
+                        }
+                        
+                        return;
+                    }());
+                }
+                
                 logger.logNodeStream(message.data, message.stream, this.getLogStreamOutObject(message.pid, true), ide);
                 return;
             case "node-exit":
@@ -664,7 +684,7 @@ module.exports = ext.register("ext/console/console", {
                             _self.showInput();
                             txtConsoleInput.setValue(def[1]);
                             if (!def[4]) {
-                                _self.keyEvents[KEY_CR](txtConsoleInput);
+                                txtConsoleInput.execCommand("Return");
                                 txtConsole.$container.scrollTop = txtConsole.$container.scrollHeight;
                             }
                             txtConsoleInput.focus();
@@ -733,9 +753,6 @@ module.exports = ext.register("ext/console/console", {
             }
         });
 
-        txtConsoleInput.addEventListener("keyup", this.keyupHandler.bind(this));
-        txtConsoleInput.addEventListener("keydown", this.keydownHandler.bind(this));
-
         function kdHandler(e){
             if (!e.ctrlKey && !e.metaKey && !e.altKey
               && !e.shiftKey && apf.isCharacter(e.keyCode))
@@ -780,21 +797,18 @@ module.exports = ext.register("ext/console/console", {
 
         this.nodes.push(winDbgConsole, this.splitter);
 
-        this.keyEvents[KEY_UP] = function(input) {
-            var newVal = _self.cliInputHistory.getPrev() || "";
-            input.setValue(newVal);
-        };
-        this.keyEvents[KEY_DOWN] = function(input) {
-            var newVal = _self.cliInputHistory.getNext() || "";
-            input.setValue(newVal);
-        };
-        this.keyEvents[KEY_CR] = function(input) {
-            var inputVal = input.getValue().trim();
-            if (inputVal === "/?")
-                return false;
-            _self.evalInputCommand(inputVal);
-            input.setValue("");
-        };
+        
+        txtConsoleInput.ace.commands.bindKeys({
+            "up": function(input) {input.setValue(_self.cliInputHistory.getPrev(), 1);},
+            "down": function(input) {input.setValue(_self.cliInputHistory.getNext(), 1);},
+            "Return": function(input) {
+                var inputVal = input.getValue().trim();
+                if (inputVal === "/?")
+                    return false;
+                _self.evalInputCommand(inputVal);
+                input.setValue("");
+            },
+        })
 
         if (this.logged.length) {
             this.logged.forEach(function(text){

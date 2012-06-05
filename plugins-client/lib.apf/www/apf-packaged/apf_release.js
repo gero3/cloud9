@@ -2086,7 +2086,7 @@ apf.Class.prototype = new (function(){
         }
         
         //Optimized event calling
-        if ((arr = this.$eventsStack[eventName]) && isChanged) {
+        if (arr = this.$eventsStack[eventName] && isChanged) {
             /*for (i = 0, l = arr.length; i < l; i++) {
                 if (arr[i].call(this, e || (e = new apf.AmlEvent(eventName, {
                     prop     : prop, 
@@ -33021,9 +33021,6 @@ apf.DelayedRender = function(){
         this.$rendered = true;
 
         this.dispatchEvent("afterrender");
-        this.addEventListener("$event.afterrender", function(cb){
-            cb.call(this);
-        });
 
         this.$ext.style.visibility = "";
     };
@@ -66226,8 +66223,7 @@ apf.webdav = function(struct, tagName){
             authRequired = true;
         }
 
-        var auth = this.ownerDocument 
-           && this.ownerDocument.getElementsByTagNameNS(apf.ns.apf, "auth")[0];
+        var auth = this.ownerDocument.getElementsByTagNameNS(apf.ns.apf, "auth")[0];
         if (authRequired) {
             auth.authRequired(callback);
         }
@@ -66594,7 +66590,8 @@ apf.webdav = function(struct, tagName){
         aCont.push("</D:", reportName, ">");
 
         this.method = "REPORT";
-        this.doRequest(function(data, state, extra) {
+        
+        return this.doRequest(function(data, state, extra) {
             var iStatus = parseInt(extra.status, 10);
             if (state != apf.SUCCESS) {
                 var oError = WebDAVError.call(this, "Unable to fetch report on '" + sPath
